@@ -5,10 +5,12 @@
 ---
 
 ## Phase 0 — Setup (same pattern as pyrbmi)
-- [ ] 0.1 uv init, pyproject.toml, ruff, mypy
-- [ ] 0.2 CI/CD: lint, test, R parity weekly run
-- [ ] 0.3 License: Apache-2.0
-- [ ] 0.4 MkDocs documentation
+- [x] 0.1 uv init, pyproject.toml, ruff, mypy
+- [x] 0.2 CI/CD: lint, test, R parity weekly run
+- [x] 0.3 License: Apache-2.0
+- [x] 0.4 MkDocs documentation
+- [x] 0.5 .gitignore
+- [x] 0.6 .pre-commit-config.yaml
 
 ## v0.1.0 — Instantaneous Rt (EpiEstim parity)
 - [ ] `Incidence` data object (date-indexed, right-censoring support)
