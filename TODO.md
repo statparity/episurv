@@ -13,10 +13,10 @@
 - [x] 0.6 .pre-commit-config.yaml
 
 ## v0.1.0 — Instantaneous Rt (EpiEstim parity)
-- [ ] `Incidence` data object (date-indexed, right-censoring support)
-- [ ] `SerialInterval`: parametric (Gamma, LogNormal) + empirical
-- [ ] `estimate_rt_instant()`: renewal equation, sliding window, Gamma posterior
-- [ ] `RtResult`: per-window R, lower/upper CI, posterior mean
+- [x] `Incidence` data object (date-indexed, right-censoring support)
+- [x] `SerialInterval`: parametric (Gamma, LogNormal) + empirical
+- [x] `estimate_rt_instant()`: renewal equation, sliding window, Gamma posterior
+- [x] `RtResult`: per-window R, lower/upper CI, posterior mean
 - [ ] Validation: compare to `EpiEstim::estimate_R()` on `flu1918` dataset (tol=1e-4)
 
 ## v0.2.0 — Uncertain SI + Compartmental Models
