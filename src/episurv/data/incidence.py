@@ -37,6 +37,7 @@ class Incidence:
         if not isinstance(self.values, pd.Series):
             self.values = pd.Series(self.values, index=self.dates)
         else:
+            self.values = self.values.copy()
             self.values.index = self.dates
 
         # Default is_censored to all False

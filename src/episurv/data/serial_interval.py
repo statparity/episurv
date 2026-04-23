@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import Literal
 
@@ -58,60 +59,104 @@ class SerialInterval:
             raise ValueError(f"Cannot compute PMF for {self.dist_type}")
 
     def _gamma_pmf(self) -> np.ndarray:
-        """Compute Gamma distribution PMF (discretized)."""
+        """Compute Gamma PMF using EpiEstim's discr_si formula (shifted Gamma, shift=1).
+
+        Matches EpiEstim::discr_si exactly:
+            a = ((mu-1)/sigma)^2
+            b = sigma^2 / (mu-1)
+            w[k] = k*F(k,a,b) + (k-2)*F(k-2,a,b) - 2*(k-1)*F(k-1,a,b)
+                   + a*b*(2*F(k-1,a+1,b) - F(k-2,a+1,b) - F(k,a+1,b))
+            w[0] = 0 always.
+        """
         if self.params is None:
             raise ValueError("Gamma params required")
 
-        shape = self.params["shape"]
-        scale = self.params["scale"]
+        mu = self.params["mean"]
+        sigma = self.params["sd"]
 
-        # Discretized Gamma: P(SI = k) = F(k+1) - F(k)
-        k_vals = np.arange(0, self.max_si + 1)
-        cdf_vals: np.ndarray = stats.gamma.cdf(k_vals + 1, shape, scale=scale)
-        pmf = np.diff(cdf_vals, prepend=0)
+        if mu <= 1:
+            raise ValueError("Gamma SI mean must be > 1 (EpiEstim shifted Gamma convention)")
+        if sigma <= 0:
+            raise ValueError("Gamma SI sd must be > 0")
 
-        # Truncate and normalize
-        pmf_truncated: np.ndarray = pmf[: self.max_si]
-        result: np.ndarray = pmf_truncated / pmf_truncated.sum()
+        # EpiEstim parameterization (shape/scale of unshifted Gamma)
+        a = ((mu - 1) / sigma) ** 2
+        b = sigma**2 / (mu - 1)
+
+        k = np.arange(0, self.max_si + 1, dtype=float)
+
+        def cdf(x: np.ndarray, shape: float, scale: float) -> np.ndarray:
+            result: np.ndarray = stats.gamma.cdf(x, shape, scale=scale)
+            return result
+
+        # EpiEstim formula
+        w = (
+            k * cdf(k, a, b)
+            + (k - 2) * cdf(k - 2, a, b)
+            - 2 * (k - 1) * cdf(k - 1, a, b)
+            + a * b * (2 * cdf(k - 1, a + 1, b) - cdf(k - 2, a + 1, b) - cdf(k, a + 1, b))
+        )
+        # Clamp negatives (numerical noise)
+        w = np.maximum(w, 0.0)
+        # w[0] is always 0 by construction; enforce explicitly
+        w[0] = 0.0
+
+        # Normalize
+        total = w.sum()
+        if total == 0:
+            raise ValueError("Gamma PMF sums to zero — check mean/sd parameters")
+        result: np.ndarray = w / total
         return result
 
     def _lognormal_pmf(self) -> np.ndarray:
-        """Compute LogNormal distribution PMF (discretized)."""
+        """Compute LogNormal distribution PMF (naive discretization).
+
+        Note: EpiEstim does not provide a discr_si equivalent for LogNormal;
+        this uses P(SI=k) = F(k+0.5) - F(k-0.5) (continuity-corrected).
+        w[0] = 0 is enforced.
+        """
         if self.params is None:
             raise ValueError("LogNormal params required")
 
         mu = self.params["mu"]
         sigma = self.params["sigma"]
 
-        # Discretized LogNormal
-        k_vals = np.arange(0, self.max_si + 1)
-        cdf_vals: np.ndarray = stats.lognorm.cdf(k_vals + 1, sigma, scale=np.exp(mu))
-        pmf = np.diff(cdf_vals, prepend=0)
+        k = np.arange(0, self.max_si + 1, dtype=float)
+        # Continuity-corrected CDF differences
+        cdf_vals: np.ndarray = stats.lognorm.cdf(k + 0.5, sigma, scale=np.exp(mu))
+        w = np.diff(cdf_vals, prepend=stats.lognorm.cdf(0.5, sigma, scale=np.exp(mu)))
+        w[0] = 0.0
+        w = np.maximum(w, 0.0)
 
-        pmf_truncated: np.ndarray = pmf[: self.max_si]
-        result: np.ndarray = pmf_truncated / pmf_truncated.sum()
+        total = w.sum()
+        if total == 0:
+            raise ValueError("LogNormal PMF sums to zero — check mean/sd parameters")
+        result: np.ndarray = w / total
         return result
 
     @classmethod
     def gamma(cls, mean: float, sd: float, max_si: int = 30) -> Self:
-        """Create Gamma-distributed serial interval.
+        """Create Gamma-distributed serial interval using EpiEstim's discr_si convention.
+
+        Uses a shifted Gamma (shift=1) matching EpiEstim::discr_si exactly.
+        Requires mean > 1.
 
         Args:
-            mean: Mean serial interval in days.
-            sd: Standard deviation.
+            mean: Mean serial interval in days (must be > 1).
+            sd: Standard deviation (must be > 0).
             max_si: Maximum serial interval length (truncation).
 
         Returns:
-            SerialInterval with Gamma distribution.
+            SerialInterval with Gamma distribution (w[0]=0).
         """
-        # Gamma parameterization: shape = mean^2 / var, scale = var / mean
-        var = sd**2
-        shape = mean**2 / var
-        scale = var / mean
+        if mean <= 1:
+            raise ValueError("mean must be > 1 for EpiEstim shifted Gamma (shift=1)")
+        if sd <= 0:
+            raise ValueError("sd must be > 0")
 
         return cls(
             dist_type="gamma",
-            params={"shape": shape, "scale": scale, "mean": mean, "sd": sd},
+            params={"mean": mean, "sd": sd},
             max_si=max_si,
         )
 
@@ -120,13 +165,18 @@ class SerialInterval:
         """Create LogNormal-distributed serial interval.
 
         Args:
-            mean: Mean serial interval in days.
-            sd: Standard deviation.
+            mean: Mean serial interval in days (must be > 0).
+            sd: Standard deviation (must be > 0).
             max_si: Maximum serial interval length (truncation).
 
         Returns:
-            SerialInterval with LogNormal distribution.
+            SerialInterval with LogNormal distribution (w[0]=0).
         """
+        if mean <= 0:
+            raise ValueError("mean must be > 0")
+        if sd <= 0:
+            raise ValueError("sd must be > 0")
+
         # Convert mean/sd to lognormal mu/sigma
         var = sd**2
         mu = np.log(mean**2 / np.sqrt(var + mean**2))
@@ -151,8 +201,19 @@ class SerialInterval:
         """
         si_array = np.asarray(si_data)
 
+        # Warn if any values fall outside [0, max_si]
+        n_out = int(np.sum((si_array < 0) | (si_array > max_si)))
+        if n_out > 0:
+            warnings.warn(
+                f"{n_out} serial interval value(s) outside [0, {max_si}] were excluded.",
+                UserWarning,
+                stacklevel=2,
+            )
+
         # Compute empirical PMF via histogram
         counts, _ = np.histogram(si_array, bins=np.arange(-0.5, max_si + 1.5))
+        # Enforce w[0] = 0 (zero-day SI is epidemiologically impossible)
+        counts[0] = 0
         total = counts.sum()
         if total == 0:
             raise ValueError("No serial interval data in valid range")
@@ -177,7 +238,7 @@ class SerialInterval:
         if self.pmf is None:
             raise ValueError("PMF not computed")
 
-        max_len = max_len or self.max_si
+        max_len = self.max_si if max_len is None else max_len
         pmf = self.pmf[:max_len]
 
         # Renormalize if truncated

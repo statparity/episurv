@@ -105,17 +105,20 @@ def estimate_rt_instant(
     if window_size > n:
         raise ValueError(f"window_size ({window_size}) cannot exceed data length ({n})")
 
-    values = incidence.values.values
+    values = incidence.values.to_numpy(dtype=float)
     pmf = si.get_pmf(max_len=n)
 
-    # Compute total infectiousness Λ(t) = Σ I(t-s) w(s)
-    # This is a convolution: Λ = I * w (reversed)
+    # Compute total infectiousness Λ(t) = Σ_{k=1}^{t-1} I[t-k] * w[k]
+    # Matches EpiEstim overall_infectivity: lambda[1]=NA (0 here), sums k=1..t-1.
+    # pmf[0]=0 always (enforced by discr_si / empirical conventions).
+    # np.convolve(values, pmf)[t] = Σ_{k=0}^{t} values[t-k]*pmf[k]
+    #                              = Σ_{k=1}^{t} values[t-k]*pmf[k]  (pmf[0]=0)
+    # EpiEstim sums k=1..t-1 (excludes current-day contribution I[t]*w[0]=0 AND
+    # the k=t term I[0]*w[t]), so we assign infectiousness[t] = conv[t-1].
     infectiousness = np.zeros(n)
-    for t in range(1, n):
-        # Sum over possible serial intervals
-        max_s = min(t, len(pmf))
-        for s in range(1, max_s + 1):
-            infectiousness[t] += values[t - s] * pmf[s - 1]
+    if len(pmf) > 0 and n > 1:
+        conv = np.convolve(values, pmf)
+        infectiousness[1:] = conv[: n - 1]
 
     # Prior parameters (Gamma: shape=α, scale=β)
     # mean = αβ, var = αβ²
